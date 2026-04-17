@@ -360,6 +360,33 @@ def process_statistics_step2(df: pd.DataFrame) -> Optional[pd.DataFrame]:
     return result_df
 
 
+# ==================== 后处理功能 ====================
+
+def add_folder_name_column(df: pd.DataFrame) -> pd.DataFrame:
+    """添加总图片文件夹名列（提取源文件名的前15个字符）"""
+    if '源文件名' not in df.columns:
+        print("警告：没有找到'源文件名'列，跳过添加文件夹名列")
+        return df
+    
+    df['总图片文件夹名'] = df['源文件名'].astype(str).str[:15]
+    print(f"已添加'总图片文件夹名'列（提取源文件名的前15个字符）")
+    
+    return df
+
+def add_sequence_number_column(df: pd.DataFrame) -> pd.DataFrame:
+    """添加新列名列（总图片文件夹名-序号）"""
+    if '总图片文件夹名' not in df.columns:
+        print("警告：没有找到'总图片文件夹名'列，跳过添加序号列")
+        return df
+    
+    # 按"总图片文件夹名"列分组，为每组内的每一行生成序号后缀
+    df['新列名'] = df.groupby('总图片文件夹名').cumcount() + 1
+    df['新列名'] = df['总图片文件夹名'] + '-' + df['新列名'].astype(str).str.zfill(3)
+    print(f"已添加'新列名'列（格式：文件夹名-三位序号）")
+    
+    return df
+
+
 # ==================== 主程序 ====================
 
 def get_output_path() -> str:
@@ -433,18 +460,27 @@ def main():
     if df_result is None:
         return
     
+    # 第三步：添加文件夹名列
+    df_result = add_folder_name_column(df_result)
+    
+    # 第四步：添加序号列
+    df_result = add_sequence_number_column(df_result)
+    
     # 确定输出路径
     if output_choice == "auto":
-        output_filename = f"统计结果_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        output_filename = f"BeforeSplit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         output_path = os.path.join(folder_path, output_filename)
     else:
         output_path = output_choice
     
-    # 保存结果
-    df_result.to_excel(output_path, index=False, engine='openpyxl')
+    # 保存结果（工作表命名为"抽象"）
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        df_result.to_excel(writer, sheet_name='抽象', index=False)
     
     print(f"\n处理完成!")
     print(f"输出文件: {output_path}")
+    print(f"工作表名: 抽象")
+    print(f"新增列: 总图片文件夹名、新列名")
 
 if __name__ == "__main__":
     try:
