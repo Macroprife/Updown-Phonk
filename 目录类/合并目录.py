@@ -6,6 +6,7 @@ from typing import List, Optional
 from datetime import datetime
 import xlrd
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
 
 warnings.filterwarnings('ignore')
 
@@ -387,6 +388,185 @@ def add_sequence_number_column(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ==================== 页号合理性检查功能 ====================
+
+def check_page_number_reasonableness(df: pd.DataFrame) -> tuple:
+    """
+    检查工作表中页号的合理性
+    
+    返回:
+    (df, unreasonable_groups): 添加了合理性列的DataFrame和不合理分组的集合
+    """
+    
+    print("正在进行页号合理性检查...")
+    
+    # 检查必要的列是否存在
+    if '源文件名' not in df.columns or '页号' not in df.columns:
+        print("警告：缺少'源文件名'或'页号'列，跳过合理性检查")
+        return df, set()
+    
+    # 添加"合理性"列，默认值为"目前合理"
+    df['合理性'] = '目前合理'
+    
+    # 用于记录哪些源文件名分组包含不合理数据
+    unreasonable_groups = set()
+    
+    # 按"源文件名"分组
+    for source_file, group in df.groupby('源文件名'):
+        # 获取该组的索引
+        indices = group.index.tolist()
+        
+        # 获取页号列的数据
+        page_numbers = group['页号'].tolist()
+        
+        # 标记当前分组是否有不合理数据
+        has_unreasonable = False
+        
+        # 检查递进状态（除了最后一行）
+        for i in range(len(page_numbers) - 1):
+            current_page = page_numbers[i]
+            next_page = page_numbers[i+1]
+            
+            # 跳过最后一行，因为最后一行是特殊格式
+            if i == len(page_numbers) - 2:
+                continue
+                
+            # 检查是否为数字且是否递增
+            try:
+                current_num = float(current_page) if isinstance(current_page, (int, float)) else int(current_page)
+                next_num = float(next_page) if isinstance(next_page, (int, float)) else int(next_page)
+                
+                # 如果不是递增状态，标记为不合理
+                if current_num >= next_num:
+                    df.loc[indices[i], '合理性'] = '不合理'
+                    has_unreasonable = True
+                    print(f"  警告：在分组 '{source_file}' 中，页号 {current_page} 到 {next_page} 不是递增状态")
+                    
+            except (ValueError, TypeError):
+                # 如果当前行不是最后一行的特殊格式却无法转换为数字，标记为不合理
+                df.loc[indices[i], '合理性'] = '不合理'
+                has_unreasonable = True
+                print(f"  警告：在分组 '{source_file}' 中，页号 '{current_page}' 无法识别为有效数字")
+        
+        # 检查最后一行格式
+        if len(page_numbers) > 0:
+            last_page = str(page_numbers[-1])
+            last_index = indices[-1]
+            
+            # 检查格式是否为"数字-数字"
+            pattern = r'^\d+-\d+$'
+            if not re.match(pattern, last_page):
+                df.loc[last_index, '合理性'] = '不合理'
+                has_unreasonable = True
+                print(f"  警告：在分组 '{source_file}' 中，最后一行页号 '{last_page}' 不符合XX-XX格式")
+            else:
+                # 格式正确，检查前后数字
+                parts = last_page.split('-')
+                if int(parts[0]) > int(parts[1]):
+                    # 如果前面的数字大于后面的数字，可能也有问题
+                    df.loc[last_index, '合理性'] = '不合理'
+                    has_unreasonable = True
+                    print(f"  警告：在分组 '{source_file}' 中，最后一行页号 '{last_page}' 中前一个数字大于后一个数字")
+        
+        # 检查倒数第二行到最后一行的递进关系
+        if len(page_numbers) >= 2:
+            second_last_page = page_numbers[-2]
+            last_page_str = str(page_numbers[-1])
+            
+            try:
+                second_last_num = float(second_last_page) if isinstance(second_last_page, (int, float)) else int(second_last_page)
+                
+                # 提取最后一行的第一个数字
+                if re.match(r'^\d+-\d+$', last_page_str):
+                    first_num = int(last_page_str.split('-')[0])
+                    
+                    # 倒数第二行的页号应该小于等于最后一行的第一个数字
+                    if second_last_num > first_num:
+                        df.loc[indices[-2], '合理性'] = '不合理'
+                        has_unreasonable = True
+                        print(f"  警告：在分组 '{source_file}' 中，倒数第二行页号 {second_last_page} 大于最后一行的起始页 {first_num}")
+            except (ValueError, TypeError):
+                pass
+        
+        # 如果该分组包含不合理数据，将源文件名添加到集合中
+        if has_unreasonable:
+            unreasonable_groups.add(source_file)
+    
+    # 统计结果
+    unreasonable_count = (df['合理性'] == '不合理').sum()
+    total_count = len(df)
+    unreasonable_group_count = len(unreasonable_groups)
+    total_group_count = df['源文件名'].nunique()
+    
+    print(f"\n页号合理性检查完成：")
+    print(f"  总计 {total_count} 行数据，分布在 {total_group_count} 个分组中")
+    print(f"  其中 {unreasonable_count} 行被标记为'不合理'")
+    print(f"  涉及 {unreasonable_group_count} 个不合理的分组")
+    
+    return df, unreasonable_groups
+
+
+# ==================== 目录页总数与对比功能 ====================
+
+def add_directory_page_total_and_comparison(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    添加目录页总数和与备考表对比列
+    - 目录页总数：每个分组的页数总和，只在每组的最后一行显示
+    - 目录与备考表对比：对比目录页总数与每份页数，显示"相等"或"不相等"
+    """
+    
+    print("正在计算目录页总数并与备考表对比...")
+    
+    # 检查必要的列是否存在
+    if '源文件名' not in df.columns:
+        print("警告：缺少'源文件名'列，跳过计算")
+        return df
+    
+    if '页数' not in df.columns:
+        print("警告：缺少'页数'列，跳过计算")
+        return df
+    
+    if '每份页数' not in df.columns:
+        print("警告：缺少'每份页数'列，跳过对比")
+        return df
+    
+    # 初始化新列
+    df['目录页总数'] = ''
+    df['目录与备考表对比'] = ''
+    
+    # 按源文件名分组
+    for source_name, group in df.groupby('源文件名'):
+        # 计算该组的页数总和
+        total_pages = group['页数'].sum()
+        
+        # 获取该组的每份页数值（同一分组内每份页数应该相同，取第一个）
+        pages_per_file = group['每份页数'].iloc[0] if len(group) > 0 else 0
+        
+        # 获取该组的最后一个索引
+        last_index = group.index[-1]
+        
+        # 在最后一行的目录页总数列填入总和
+        df.loc[last_index, '目录页总数'] = total_pages
+        
+        # 对比并填入结果
+        if total_pages == pages_per_file:
+            df.loc[last_index, '目录与备考表对比'] = '相等'
+        else:
+            df.loc[last_index, '目录与备考表对比'] = '不相等'
+        
+        print(f"  分组 '{source_name}': 目录页总数={total_pages}, 备考表页数={pages_per_file}, 结果={df.loc[last_index, '目录与备考表对比']}")
+    
+    # 统计对比结果
+    equal_count = (df['目录与备考表对比'] == '相等').sum()
+    not_equal_count = (df['目录与备考表对比'] == '不相等').sum()
+    
+    print(f"\n目录页总数与备考表对比完成：")
+    print(f"  相等: {equal_count} 个分组")
+    print(f"  不相等: {not_equal_count} 个分组")
+    
+    return df
+
+
 # ==================== 主程序 ====================
 
 def get_output_path() -> str:
@@ -436,7 +616,9 @@ def get_output_path() -> str:
 
 def main():
     """主程序"""
-    print("Excel文件数据汇总与统计分析工具")
+    print("=" * 60)
+    print("Excel文件数据汇总与统计分析工具（完整版）")
+    print("=" * 60)
     
     folder_path = input("\n请输入要处理的文件夹路径: ").strip()
     folder_path = folder_path.strip('"').strip("'")
@@ -466,6 +648,12 @@ def main():
     # 第四步：添加序号列
     df_result = add_sequence_number_column(df_result)
     
+    # 第五步：计算目录页总数并与备考表对比
+    df_result = add_directory_page_total_and_comparison(df_result)
+    
+    # 第六步：页号合理性检查
+    df_result, unreasonable_groups = check_page_number_reasonableness(df_result)
+    
     # 确定输出路径
     if output_choice == "auto":
         output_filename = f"BeforeSplit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -477,16 +665,46 @@ def main():
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         df_result.to_excel(writer, sheet_name='抽象', index=False)
     
-    print(f"\n处理完成!")
+    # 标黄不合理的源文件名
+    if unreasonable_groups:
+        print("\n正在标黄不合理的源文件名...")
+        wb = load_workbook(output_path)
+        ws = wb['抽象']
+        
+        # 创建黄色填充样式
+        yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+        
+        # 找到"源文件名"列的索引
+        source_file_col_idx = None
+        for idx, cell in enumerate(ws[1], start=1):
+            if cell.value == '源文件名':
+                source_file_col_idx = idx
+                break
+        
+        if source_file_col_idx:
+            # 遍历数据行（从第2行开始）
+            for row_idx in range(2, ws.max_row + 1):
+                cell = ws.cell(row=row_idx, column=source_file_col_idx)
+                if cell.value in unreasonable_groups:
+                    cell.fill = yellow_fill
+            
+            # 保存带格式的工作簿
+            wb.save(output_path)
+            print(f"  已标黄 {len(unreasonable_groups)} 个不合理分组的源文件名")
+    
+    print(f"\n" + "=" * 60)
+    print("处理完成!")
     print(f"输出文件: {output_path}")
     print(f"工作表名: 抽象")
-    print(f"新增列: 总图片文件夹名、新列名")
+    print(f"新增列: 总图片文件夹名、新列名、目录页总数、目录与备考表对比、合理性")
+    print("=" * 60)
 
 if __name__ == "__main__":
     try:
         import pandas
         import xlrd
         from openpyxl import load_workbook
+        from openpyxl.styles import PatternFill
     except ImportError as e:
         print(f"错误: 缺少必要的库 - {e}")
         print("请安装: pip install pandas xlrd openpyxl")
