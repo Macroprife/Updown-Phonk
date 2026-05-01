@@ -107,7 +107,7 @@ class PDFSplitterApp:
         
         #tip_text = "📌 Excel列：总文件名、分件文件名、起始页、总页数、每份文件页数"
         #tk.Label(tip_frame, text=tip_text, bg='#FFF8DC', fg='#8B6914', 
-        #        font=('正楷', 9), padx=10, pady=6).pack()
+        #       font=('正楷', 9), padx=10, pady=6).pack()
         
         # 进度条
         self.progress = ttk.Progressbar(self.main_frame, length=400, mode='determinate')
@@ -207,7 +207,7 @@ class PDFSplitterApp:
                     if not pdf_path:
                         raise Exception(f"找不到PDF文件：{total_name}")
                     
-                    # 创建一级目录（总文件名目录）
+                    # 创建一级目录（总文件名）
                     output_subdir = os.path.join(self.output_dir_var.get(), total_name)
                     os.makedirs(output_subdir, exist_ok=True)
                     
@@ -250,7 +250,7 @@ class PDFSplitterApp:
                             if actual_pages != expected_pages:
                                 self.update_status(f"警告：{part_name} 实际页数({actual_pages})与预期({expected_pages})不符", '#FF8C00')
                             
-                            # 直接在一级目录下保存PDF文件
+                            # 保存PDF：直接以分件文件名命名，放在总文件名文件夹下
                             output_path = os.path.join(output_subdir, f"{part_name}.pdf")
                             with open(output_path, 'wb') as output_file:
                                 pdf_writer.write(output_file)
