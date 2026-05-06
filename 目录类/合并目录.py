@@ -91,32 +91,40 @@ def extract_max_two_digits_from_a4(file_path: str) -> Optional[int]:
         print(f"提取文件 {file_path} 的A4单元格数据时出错: {str(e)}")
         return None
 
-def find_file_title_column(df: pd.DataFrame) -> Optional[str]:
-    """查找'文件题名'列（忽略空格）"""
+def find_date_column(df: pd.DataFrame) -> Optional[str]:
+    """查找'日期'列（忽略空格）"""
     for col in df.columns:
         col_clean = str(col).replace(' ', '')
-        if col_clean == '文件题名':
+        if col_clean == '日期':
             return col
     return None
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """清理DataFrame，删除文件题名为空的行"""
-    title_col = find_file_title_column(df)
+    """清理DataFrame，删除日期为空的行"""
     
-    if title_col is None:
-        print(f"  警告: 未找到'文件题名'列，跳过清理")
+    # 查找日期列
+    date_col = find_date_column(df)
+    
+    if date_col is None:
+        print(f"  警告: 未找到'日期'列，跳过清理")
         return df
     
     original_count = len(df)
     
-    df = df.dropna(subset=[title_col])
-    df = df[df[title_col].astype(str).str.strip() != '']
+    # 删除日期为NaN的行
+    df = df.dropna(subset=[date_col])
+    
+    # 删除日期为空字符串或只有空格的行
+    df = df[df[date_col].astype(str).str.strip() != '']
+    
+    # 重置索引
+    df = df.reset_index(drop=True)
     
     cleaned_count = len(df)
     removed_count = original_count - cleaned_count
     
     if removed_count > 0:
-        print(f"  清理'文件题名'列: 删除 {removed_count} 行空数据")
+        print(f"  清理'日期'列空行: 删除 {removed_count} 行数据")
     
     return df
 
