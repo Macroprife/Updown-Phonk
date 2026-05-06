@@ -7,13 +7,13 @@ from tkinter import filedialog
 
 def clean_filename(filename):
     """
-    规范化文件名：去掉扩展名和所有括号符号（中英文），保留括号内的内容
+    规范化文件名：去掉扩展名、所有括号符号（中英文）和空格，保留括号内的内容
     
     Args:
         filename: 原始文件名（包含扩展名）
     
     Returns:
-        规范化后的文件名（去掉括号符号和扩展名，保留括号内内容）
+        规范化后的文件名（去掉括号符号、空格和扩展名，保留括号内内容）
     """
     # 先分离文件名和扩展名
     name_without_ext = os.path.splitext(filename)[0]
@@ -40,12 +40,13 @@ def clean_filename(filename):
     for char in bracket_chars:
         cleaned = cleaned.replace(char, '')
     
-    # 去掉多余的空白字符
-    cleaned = re.sub(r'\s+', ' ', cleaned)  # 多个空格合并为一个
-    cleaned = cleaned.strip()  # 去掉首尾空格
+    # 去掉所有空格（包括半角空格、全角空格、制表符等）
+    cleaned = re.sub(r'\s+', '', cleaned)  # 去掉所有空白字符
+    cleaned = cleaned.replace('　', '')    # 去掉全角空格
     
-    # 清理括号去除后可能留下的多余空格（如 "内容 备注" -> "内容 备注"）
-    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
+    # 清理括号去除后可能留下的多余符号
+    cleaned = re.sub(r'[-_]{2,}', '-', cleaned)  # 多个破折号或下划线合并为一个
+    cleaned = cleaned.strip('-_')  # 去掉首尾的破折号和下划线
     
     return cleaned
 
@@ -139,15 +140,17 @@ def show_cleaning_demo():
     print("=" * 60)
     
     examples = [
-        ("报告(最终版).pdf", "去掉英文括号，保留内容"),
-        ("数据【2024年】.xlsx", "去掉中文方括号，保留内容"),
-        ("文档[草稿].docx", "去掉英文方括号，保留内容"),
-        ("计划（待审核）.pdf", "去掉中文括号，保留内容"),
-        ("项目{备份}.xlsx", "去掉花括号，保留内容"),
-        ("手册<修订版>.pdf", "去掉尖括号，保留内容"),
-        ("材料（第3版）[副本].xlsx", "去掉混合括号，保留内容"),
-        ("测试(完整版)（含答案）.pdf", "去掉混合括号，保留内容"),
-        ("《项目总结》最终版.pdf", "去掉书名号，保留内容"),
+        ("报告 (最终版).pdf", "去掉英文括号和空格，保留内容"),
+        ("数据 【2024年】.xlsx", "去掉中文方括号和空格，保留内容"),
+        ("文档 [草稿].docx", "去掉英文方括号和空格，保留内容"),
+        ("计划 （待审核）.pdf", "去掉中文括号和空格，保留内容"),
+        ("项目 {备份}.xlsx", "去掉花括号和空格，保留内容"),
+        ("手册 <修订版>.pdf", "去掉尖括号和空格，保留内容"),
+        ("材料 （第3版） [副本].xlsx", "去掉混合括号和空格，保留内容"),
+        ("测试 (完整版) （含答案）.pdf", "去掉混合括号和空格，保留内容"),
+        ("《项目总结》 最终版.pdf", "去掉书名号和空格，保留内容"),
+        ("2024年 第一季度 报告.pdf", "去掉所有空格"),
+        ("文件　名称　测试.pdf", "去掉全角空格"),
     ]
     
     for original, description in examples:
@@ -389,7 +392,7 @@ def process_multiple_folders():
                     modified_count += 1
         
         if modified_count > 0:
-            print(f"📝 其中 {modified_count} 个文件经过了规范化处理（去掉括号符号，保留内容）")
+            print(f"📝 其中 {modified_count} 个文件经过了规范化处理")
         
         print(f"\n📋 Excel工作表结构：")
         print("   • 汇总信息 - 所有文件夹的统计概览")
@@ -401,10 +404,11 @@ def process_multiple_folders():
         
         print(f"\n📋 规范化规则：")
         print("   • 去掉所有中英文括号符号：() （） [] 【】 {} 《》等")
+        print("   • 去掉所有空格（包括半角和全角空格）")
         print("   • 保留括号内的所有内容")
         print("   • 去掉文件扩展名")
-        print("   • 示例：报告(最终版).pdf → 报告最终版.pdf")
-        print("   • 示例：数据【2024年】.xlsx → 数据2024年.xlsx")
+        print("   • 示例：报告 (最终版).pdf → 报告最终版")
+        print("   • 示例：2024年 第一季度 报告.pdf → 2024年第一季度报告")
         
     except Exception as e:
         print(f"\n❌ 生成Excel文件时出错：{e}")
