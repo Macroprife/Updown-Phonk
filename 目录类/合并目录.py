@@ -49,7 +49,7 @@ def get_sheet_names(file_path: str) -> List[str]:
         return []
 
 def extract_max_two_digits_from_a4(file_path: str) -> Optional[int]:
-    """从'4.卷内备考表'工作表的A4单元格提取最大的两位数字"""
+    """从'4.卷内备考表'工作表的A4单元格提取总页数（最大的两位数字）"""
     try:
         engine = get_excel_engine(file_path)
         
@@ -78,14 +78,61 @@ def extract_max_two_digits_from_a4(file_path: str) -> Optional[int]:
         
         if a4_value is None:
             return None
-            
-        two_digit_numbers = re.findall(r'\b\d{2}\b', str(a4_value))
         
-        if not two_digit_numbers:
-            return None
+        # 将单元格内容转换为字符串
+        text = str(a4_value)
+        
+        # 清理文本：移除可能影响匹配的特殊字符
+        # 移除Unicode组合字符（包括组合下划线）
+        import unicodedata
+        text = ''.join(c for c in text if not unicodedata.combining(c))
+        
+        # 移除常见的特殊下划线字符
+        text = text.replace('_', '')  # 普通下划线
+        text = text.replace('ˍ', '')  # 修饰字母下划线
+        text = text.replace('‗', '')  # 双下划线
+        text = text.replace('̲', '')  # 组合下划线
+        
+        # 也可以使用更通用的方法：只保留中文、数字、英文字母、空格和常见标点
+        # text = re.sub(r'[^\u4e00-\u9fff\w\s.,;:!?，。；：！？、]', '', text)
+        
+        print(f"  清理后的A4文本: {text}")  # 调试信息，可以看到清理后的文本
+        
+        # 匹配所有"数字+空格+页"的组合（中间可能有任意空格）
+        page_matches = re.findall(r'(\d+)\s*页', text)
+        
+        if page_matches:
+            # 将所有匹配到的数字转换为整数
+            numbers = [int(num) for num in page_matches]
             
-        numbers = [int(num) for num in two_digit_numbers]
-        return max(numbers)
+            # 过滤出两位数（10-99）
+            two_digit_numbers = [num for num in numbers if 10 <= num <= 99]
+            
+            if two_digit_numbers:
+                # 返回最大的两位数字
+                result = max(two_digit_numbers)
+                print(f"  提取到的页数: {result}")  # 调试信息
+                return result
+        
+        # 如果没有找到"XX页"格式，回退到提取所有两位数字
+        two_digit_numbers = re.findall(r'\b\d{2}\b', text)
+        if two_digit_numbers:
+            numbers = [int(num) for num in two_digit_numbers]
+            result = max(numbers)
+            print(f"  回退方法提取到的页数: {result}")  # 调试信息
+            return result
+        
+        # 如果都没找到，尝试直接提取所有数字
+        all_numbers = re.findall(r'\d+', text)
+        if all_numbers:
+            numbers = [int(num) for num in all_numbers]
+            two_digit_numbers = [num for num in numbers if 10 <= num <= 99]
+            if two_digit_numbers:
+                result = max(two_digit_numbers)
+                print(f"  直接提取数字得到的页数: {result}")  # 调试信息
+                return result
+        
+        return None
         
     except Exception as e:
         print(f"提取文件 {file_path} 的A4单元格数据时出错: {str(e)}")
