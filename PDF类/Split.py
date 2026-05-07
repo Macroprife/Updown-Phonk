@@ -8,7 +8,7 @@ from pathlib import Path
 class PDFSplitterApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("传送门")
+        self.root.title("传送门 - PDF批量分割工具")
         self.root.geometry("600x500")
         self.root.resizable(False, False)
         
@@ -43,10 +43,10 @@ class PDFSplitterApp:
                                bg='#E8F4FD', fg='#2C5F8A')
         title_label.pack(pady=(20, 5))
         
-        #subtitle_label = tk.Label(self.main_frame, text="PDF批量分割工具", 
-        #                         font=("正楷", 12), 
-        #                         bg='#E8F4FD', fg='#4A90D9')
-        #subtitle_label.pack(pady=(0, 20))
+        subtitle_label = tk.Label(self.main_frame, text="PDF批量分割工具", 
+                                  font=("正楷", 12), 
+                                  bg='#E8F4FD', fg='#4A90D9')
+        subtitle_label.pack(pady=(0, 20))
         
         # Excel文件选择
         excel_frame = tk.Frame(self.main_frame, bg='#E8F4FD')
@@ -102,12 +102,12 @@ class PDFSplitterApp:
         self.sheet_entry.pack(side='left', padx=(0, 5))
         
         # 功能提示（简洁版）
-        tip_frame = tk.Frame(self.main_frame, bg='#FFF8DC', relief='groove', bd=1)
-        tip_frame.pack(pady=15, padx=40, fill='x')
+        #tip_frame = tk.Frame(self.main_frame, bg='#FFF8DC', relief='groove', bd=1)
+        #tip_frame.pack(pady=15, padx=40, fill='x')
         
-        tip_text = "📌 Excel列：总文件名、分件文件名、起始页、总页数、每份文件页数"
-        tk.Label(tip_frame, text=tip_text, bg='#FFF8DC', fg='#8B6914', 
-                font=('正楷', 9), padx=10, pady=6).pack()
+        #tip_text = "📌 Excel列：总文件名、分件文件名、起始页、总页数、每份文件页数"
+        #tk.Label(tip_frame, text=tip_text, bg='#FFF8DC', fg='#8B6914', 
+        #       font=('正楷', 9), padx=10, pady=6).pack()
         
         # 进度条
         self.progress = ttk.Progressbar(self.main_frame, length=400, mode='determinate')
@@ -149,24 +149,6 @@ class PDFSplitterApp:
         """更新状态信息"""
         self.status_label.config(text=message, fg=color)
         self.root.update()
-        
-    def create_directory_structure(self, base_output_dir, total_name, part_name):
-        """
-        创建三层目录结构
-        一级目录：总文件名（如：230-QQ0310-0001 李得林）
-        二级目录：分件文件名（如：230-QQ0310-0001-001）
-        返回：三级目录的完整路径
-        """
-        # 一级目录：总文件名
-        level1_dir = os.path.join(base_output_dir, total_name)
-        
-        # 二级目录：分件文件名
-        level2_dir = os.path.join(level1_dir, part_name)
-        
-        # 创建目录
-        os.makedirs(level2_dir, exist_ok=True)
-        
-        return level2_dir
         
     def run_split(self):
         """执行PDF分割"""
@@ -225,6 +207,10 @@ class PDFSplitterApp:
                     if not pdf_path:
                         raise Exception(f"找不到PDF文件：{total_name}")
                     
+                    # 创建一级目录（总文件名）
+                    output_subdir = os.path.join(self.output_dir_var.get(), total_name)
+                    os.makedirs(output_subdir, exist_ok=True)
+                    
                     # 读取PDF
                     with open(pdf_path, 'rb') as pdf_file:
                         pdf_reader = PyPDF2.PdfReader(pdf_file)
@@ -264,15 +250,8 @@ class PDFSplitterApp:
                             if actual_pages != expected_pages:
                                 self.update_status(f"警告：{part_name} 实际页数({actual_pages})与预期({expected_pages})不符", '#FF8C00')
                             
-                            # 创建三层目录结构并保存PDF
-                            output_dir = self.create_directory_structure(
-                                self.output_dir_var.get(), 
-                                total_name, 
-                                part_name
-                            )
-                            
-                            # 保存分割后的PDF（三级目录下）
-                            output_path = os.path.join(output_dir, f"{part_name}.pdf")
+                            # 保存PDF：直接以分件文件名命名，放在总文件名文件夹下
+                            output_path = os.path.join(output_subdir, f"{part_name}.pdf")
                             with open(output_path, 'wb') as output_file:
                                 pdf_writer.write(output_file)
                     
@@ -295,8 +274,9 @@ class PDFSplitterApp:
                 result_msg += "\n\n📁 输出目录结构示例：\n"
                 result_msg += "输出文件夹/\n"
                 result_msg += "└── 230-QQ0310-0001 李得林/\n"
-                result_msg += "    └── 230-QQ0310-0001-001/\n"
-                result_msg += "        └── 230-QQ0310-0001-001.pdf"
+                result_msg += "    ├── 230-QQ0310-0001-001.pdf\n"
+                result_msg += "    ├── 230-QQ0310-0001-002.pdf\n"
+                result_msg += "    └── ..."
                     
             messagebox.showinfo("传送结果", result_msg)
             self.update_status("传送完成", '#28A745')
