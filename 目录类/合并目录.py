@@ -209,7 +209,7 @@ def process_excel_file_step1(file_path: str) -> Optional[pd.DataFrame]:
         df['文件路径'] = file_path
         
         pages_per_file = extract_max_two_digits_from_a4(file_path)
-        df['每份页数'] = pages_per_file if pages_per_file is not None else 0
+        df['每份页数（根据备考表）'] = pages_per_file if pages_per_file is not None else 0
         
         return df
         
@@ -581,12 +581,12 @@ def add_directory_page_total_and_comparison(df: pd.DataFrame) -> pd.DataFrame:
         print("警告：缺少'页数'列，跳过计算")
         return df
     
-    if '每份页数' not in df.columns:
+    if '每份页数（根据备考表）' not in df.columns:
         print("警告：缺少'每份页数'列，跳过对比")
         return df
     
     # 初始化新列
-    df['目录页总数'] = ''
+    df['目录页总数（根据页数相加）'] = ''
     df['目录与备考表对比'] = ''
     
     # 按源文件名分组
@@ -595,13 +595,13 @@ def add_directory_page_total_and_comparison(df: pd.DataFrame) -> pd.DataFrame:
         total_pages = group['页数'].sum()
         
         # 获取该组的每份页数值（同一分组内每份页数应该相同，取第一个）
-        pages_per_file = group['每份页数'].iloc[0] if len(group) > 0 else 0
+        pages_per_file = group['每份页数（根据备考表）'].iloc[0] if len(group) > 0 else 0
         
         # 获取该组的最后一个索引
         last_index = group.index[-1]
         
         # 在最后一行的目录页总数列填入总和
-        df.loc[last_index, '目录页总数'] = total_pages
+        df.loc[last_index, '目录页总数（根据页数相加）'] = total_pages
         
         # 对比并填入结果
         if total_pages == pages_per_file:
@@ -609,7 +609,7 @@ def add_directory_page_total_and_comparison(df: pd.DataFrame) -> pd.DataFrame:
         else:
             df.loc[last_index, '目录与备考表对比'] = '不相等'
         
-        print(f"  分组 '{source_name}': 目录页总数={total_pages}, 备考表页数={pages_per_file}, 结果={df.loc[last_index, '目录与备考表对比']}")
+        print(f"  分组 '{source_name}': 目录页总数（根据页数相加）={total_pages}, 备考表页数={pages_per_file}, 结果={df.loc[last_index, '目录与备考表对比']}")
     
     # 统计对比结果
     equal_count = (df['目录与备考表对比'] == '相等').sum()
