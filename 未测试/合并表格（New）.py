@@ -1,0 +1,925 @@
+import os
+import re
+import pandas as pd
+import warnings
+from typing import List, Optional, Tuple
+from datetime import datetime
+import xlrd
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+
+warnings.filterwarnings('ignore')
+
+# ==================== Excel汇总功能 ====================
+
+def find_excel_files(root_folder: str) -> List[str]:
+    """查找指定文件夹及其子文件夹中的所有Excel文件"""
+    excel_files = []
+    for root, dirs, files in os.walk(root_folder):
+        for file in files:
+            if file.lower().endswith(('.xlsx', '.xls')):
+                excel_files.append(os.path.join(root, file))
+    return excel_files
+
+def get_excel_engine(file_path: str) -> str:
+    """根据文件扩展名确定使用的引擎"""
+    if file_path.lower().endswith('.xlsx'):
+        return 'openpyxl'
+    elif file_path.lower().endswith('.xls'):
+        return 'xlrd'
+    else:
+        return 'openpyxl'
+
+def get_sheet_names(file_path: str) -> List[str]:
+    """获取Excel文件中的所有工作表名称"""
+    engine = get_excel_engine(file_path)
+    
+    try:
+        if engine == 'openpyxl':
+            wb = load_workbook(file_path, read_only=True)
+            sheet_names = wb.sheetnames
+            wb.close()
+        else:
+            wb = xlrd.open_workbook(file_path, on_demand=True)
+            sheet_names = wb.sheet_names()
+            wb.release_resources()
+        return sheet_names
+    except Exception as e:
+        print(f"读取文件 {file_path} 的工作表名称时出错: {str(e)}")
+        return []
+
+def extract_max_two_digits_from_a4(file_path: str) -> Optional[int]:
+    """从'4.卷内备考表'工作表的A4单元格提取总页数（最大的两位数字）"""
+    try:
+        engine = get_excel_engine(file_path)
+        
+        if engine == 'openpyxl':
+            wb = load_workbook(file_path, data_only=True, read_only=True)
+            
+            if '4.卷内备考表' not in wb.sheetnames:
+                wb.close()
+                return None
+                
+            ws = wb['4.卷内备考表']
+            a4_value = ws['A4'].value
+            wb.close()
+            
+        else:
+            wb = xlrd.open_workbook(file_path)
+            
+            try:
+                ws = wb.sheet_by_name('4.卷内备考表')
+            except xlrd.biffh.XLRDError:
+                wb.release_resources()
+                return None
+                
+            a4_value = ws.cell_value(3, 0)
+            wb.release_resources()
+        
+        if a4_value is None:
+            return None
+        
+        # 将单元格内容转换为字符串
+        text = str(a4_value)
+        
+        # 清理文本：移除可能影响匹配的特殊字符
+        # 移除Unicode组合字符（包括组合下划线）
+        import unicodedata
+        text = ''.join(c for c in text if not unicodedata.combining(c))
+        
+        # 移除常见的特殊下划线字符
+        text = text.replace('_', '')  # 普通下划线
+        text = text.replace('ˍ', '')  # 修饰字母下划线
+        text = text.replace('‗', '')  # 双下划线
+        text = text.replace('̲', '')  # 组合下划线
+        
+        # 也可以使用更通用的方法：只保留中文、数字、英文字母、空格和常见标点
+        # text = re.sub(r'[^\u4e00-\u9fff\w\s.,;:!?，。；：！？、]', '', text)
+        
+        print(f"  清理后的A4文本: {text}")  # 调试信息，可以看到清理后的文本
+        
+        # 匹配所有"数字+空格+页"的组合（中间可能有任意空格）
+        page_matches = re.findall(r'(\d+)\s*页', text)
+        
+        if page_matches:
+            # 将所有匹配到的数字转换为整数
+            numbers = [int(num) for num in page_matches]
+            
+            # 过滤出两位数（10-99）
+            two_digit_numbers = [num for num in numbers if 10 <= num <= 99]
+            
+            if two_digit_numbers:
+                # 返回最大的两位数字
+                result = max(two_digit_numbers)
+                print(f"  提取到的页数: {result}")  # 调试信息
+                return result
+        
+        # 如果没有找到"XX页"格式，回退到提取所有两位数字
+        two_digit_numbers = re.findall(r'\b\d{2}\b', text)
+        if two_digit_numbers:
+            numbers = [int(num) for num in two_digit_numbers]
+            result = max(numbers)
+            print(f"  回退方法提取到的页数: {result}")  # 调试信息
+            return result
+        
+        # 如果都没找到，尝试直接提取所有数字
+        all_numbers = re.findall(r'\d+', text)
+        if all_numbers:
+            numbers = [int(num) for num in all_numbers]
+            two_digit_numbers = [num for num in numbers if 10 <= num <= 99]
+            if two_digit_numbers:
+                result = max(two_digit_numbers)
+                print(f"  直接提取数字得到的页数: {result}")  # 调试信息
+                return result
+        
+        return None
+        
+    except Exception as e:
+        print(f"提取文件 {file_path} 的A4单元格数据时出错: {str(e)}")
+        return None
+
+def find_date_column(df: pd.DataFrame) -> Optional[str]:
+    """查找'日期'列（忽略空格）"""
+    for col in df.columns:
+        col_clean = str(col).replace(' ', '')
+        if col_clean == '日期':
+            return col
+    return None
+
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """清理DataFrame，删除日期为空的行"""
+    
+    # 查找日期列
+    date_col = find_date_column(df)
+    
+    if date_col is None:
+        print(f"  警告: 未找到'日期'列，跳过清理")
+        return df
+    
+    original_count = len(df)
+    
+    # 删除日期为NaN的行
+    df = df.dropna(subset=[date_col])
+    
+    # 删除日期为空字符串或只有空格的行
+    df = df[df[date_col].astype(str).str.strip() != '']
+    
+    # 重置索引
+    df = df.reset_index(drop=True)
+    
+    cleaned_count = len(df)
+    removed_count = original_count - cleaned_count
+    
+    if removed_count > 0:
+        print(f"  清理'日期'列空行: 删除 {removed_count} 行数据")
+    
+    return df
+
+def process_excel_file_step1(file_path: str) -> Optional[pd.DataFrame]:
+    """第一步：处理单个Excel文件，提取所需数据"""
+    try:
+        sheet_names = get_sheet_names(file_path)
+        
+        if '3.卷内目录' not in sheet_names:
+            return None
+            
+        engine = get_excel_engine(file_path)
+        
+        try:
+            df = pd.read_excel(
+                file_path, 
+                sheet_name='3.卷内目录', 
+                header=2,
+                engine=engine
+            )
+        except Exception as e:
+            print(f"读取文件 {file_path} 的'3.卷内目录'工作表时出错: {str(e)}")
+            return None
+        
+        if df.empty:
+            return None
+        
+        df = clean_dataframe(df)
+        
+        if df.empty:
+            print(f"  清理后无有效数据，跳过此文件")
+            return None
+            
+        df['源文件名'] = os.path.basename(file_path)
+        df['文件路径'] = file_path
+        
+        pages_per_file = extract_max_two_digits_from_a4(file_path)
+        df['每份页数（根据备考表）'] = pages_per_file if pages_per_file is not None else 0
+        
+        return df
+        
+    except Exception as e:
+        print(f"处理文件 {file_path} 时出错: {str(e)}")
+        return None
+
+def merge_excel_files_step1(root_folder: str) -> Optional[pd.DataFrame]:
+    """第一步：遍历文件夹，合并所有Excel文件的数据"""
+    
+    print("正在查找Excel文件...")
+    excel_files = find_excel_files(root_folder)
+    print(f"找到 {len(excel_files)} 个Excel文件")
+    
+    all_data = []
+    processed_files = 0
+    
+    for i, file_path in enumerate(excel_files, 1):
+        filename = os.path.basename(file_path)
+        print(f"处理文件 {i}/{len(excel_files)}: {filename}")
+        
+        df = process_excel_file_step1(file_path)
+        
+        if df is not None:
+            all_data.append(df)
+            processed_files += 1
+    
+    if not all_data:
+        print("错误: 没有找到包含有效数据的文件")
+        return None
+    
+    print("正在合并数据...")
+    merged_df = pd.concat(all_data, ignore_index=True)
+    
+    print(f"成功处理 {processed_files} 个文件，共 {len(merged_df)} 行记录")
+    
+    return merged_df
+
+
+# ==================== 统计分析功能 ====================
+
+def parse_date_for_comparison(date_value):
+    """将日期转换为可比较的格式"""
+    if pd.isna(date_value):
+        return pd.NaT
+    
+    if isinstance(date_value, str):
+        date_str = date_value.strip()
+        
+        if re.match(r'^\d{8}$', date_str):
+            try:
+                return pd.to_datetime(date_str, format='%Y%m%d')
+            except:
+                pass
+        
+        for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d', '%d-%m-%Y', '%d/%m/%Y']:
+            try:
+                return pd.to_datetime(date_str, format=fmt)
+            except:
+                continue
+    
+    if isinstance(date_value, (int, float)):
+        date_str = str(int(date_value))
+        if len(date_str) == 8:
+            try:
+                return pd.to_datetime(date_str, format='%Y%m%d')
+            except:
+                pass
+    
+    try:
+        return pd.to_datetime(date_value)
+    except:
+        return pd.NaT
+
+def format_date_to_8digits(date_value):
+    """将日期格式化为8位数字字符串"""
+    if pd.isna(date_value):
+        return ""
+    
+    if isinstance(date_value, str):
+        date_str = date_value.strip()
+        if re.match(r'^\d{8}$', date_str):
+            return date_str
+    
+    if isinstance(date_value, (int, float)):
+        date_str = str(int(date_value))
+        if len(date_str) == 8:
+            return date_str
+    
+    if isinstance(date_value, (pd.Timestamp, datetime)):
+        return date_value.strftime('%Y%m%d')
+    
+    date_str = str(date_value).strip()
+    digits_only = re.sub(r'\D', '', date_str)
+    
+    if len(digits_only) == 8:
+        return digits_only
+    
+    return date_str
+
+def extract_start_page(page_str):
+    """提取起始页号"""
+    if pd.isna(page_str) or page_str == '':
+        return None
+    
+    page_str = str(page_str)
+    
+    if '-' in page_str:
+        match = re.match(r'(\d+)-', page_str)
+        if match:
+            return int(match.group(1))
+    else:
+        match = re.search(r'\d+', page_str)
+        if match:
+            return int(match.group())
+    
+    return None
+
+def extract_page_range(page_str):
+    """提取页码范围，返回(起始页, 结束页)"""
+    if pd.isna(page_str) or page_str == '':
+        return None, None
+    
+    page_str = str(page_str)
+    match = re.match(r'(\d+)-(\d+)', page_str)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    
+    return None, None
+
+def process_statistics_step2(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """第二步：对汇总数据进行统计分析"""
+    
+    print("正在进行统计分析...")
+    
+    required_columns = ["源文件名", "日期", "页号"]
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        print(f"错误：缺少必要的列：{missing_columns}")
+        return None
+    
+    original_dates = df["日期"].copy()
+    df["日期_转换"] = df["日期"].apply(parse_date_for_comparison)
+    
+    result_data = []
+    
+    for source_name, group_df in df.groupby("源文件名"):
+        file_count = len(group_df)
+        
+        max_date_idx = group_df["日期_转换"].idxmax()
+        min_date_idx = group_df["日期_转换"].idxmin()
+        
+        max_date_original = original_dates.loc[max_date_idx]
+        min_date_original = original_dates.loc[min_date_idx]
+        
+        max_date_str = format_date_to_8digits(max_date_original)
+        min_date_str = format_date_to_8digits(min_date_original)
+        
+        group_df_sorted = group_df.sort_index()
+        page_numbers = group_df_sorted["页号"].astype(str).tolist()
+        
+        page_counts = []
+        
+        for i in range(len(page_numbers)):
+            if i < len(page_numbers) - 1:
+                current_page = extract_start_page(page_numbers[i])
+                next_page = extract_start_page(page_numbers[i + 1])
+                
+                if current_page is not None and next_page is not None:
+                    page_count = next_page - current_page
+                else:
+                    page_count = 0
+                page_counts.append(page_count)
+            else:
+                if '-' in page_numbers[i]:
+                    start_page, end_page = extract_page_range(page_numbers[i])
+                    if start_page is not None and end_page is not None:
+                        page_count = end_page - start_page + 1
+                        
+                        if i > 0:
+                            prev_page = extract_start_page(page_numbers[i - 1])
+                            if prev_page is not None and start_page is not None:
+                                page_counts[i - 1] = start_page - prev_page
+                    else:
+                        page_count = 1
+                else:
+                    page_count = 0
+                
+                page_counts.append(page_count)
+        
+        for i, (row_idx, row) in enumerate(group_df_sorted.iterrows()):
+            result_row = row.drop("日期_转换").to_dict()
+            result_row["文件总数"] = file_count
+            result_row["最大日期"] = max_date_str
+            result_row["最小日期"] = min_date_str
+            result_row["页数"] = page_counts[i] if i < len(page_counts) else 0
+            result_data.append(result_row)
+    
+    result_df = pd.DataFrame(result_data)
+    
+    if "日期" in result_df.columns:
+        result_df["日期"] = result_df["日期"].apply(format_date_to_8digits)
+    
+    return result_df
+
+
+# ==================== 后处理功能 ====================
+
+def add_folder_name_column(df: pd.DataFrame) -> pd.DataFrame:
+    """添加总图片文件夹名列（提取源文件名的前15个字符）"""
+    if '源文件名' not in df.columns:
+        print("警告：没有找到'源文件名'列，跳过添加文件夹名列")
+        return df
+    
+    df['总图片文件夹名'] = df['源文件名'].astype(str).str[:15]
+    print(f"已添加'总图片文件夹名'列（提取源文件名的前15个字符）")
+    
+    return df
+
+def add_sequence_number_column(df: pd.DataFrame) -> pd.DataFrame:
+    """添加新列名列（总图片文件夹名-序号）"""
+    if '总图片文件夹名' not in df.columns:
+        print("警告：没有找到'总图片文件夹名'列，跳过添加序号列")
+        return df
+    
+    # 按"总图片文件夹名"列分组，为每组内的每一行生成序号后缀
+    df['新列名'] = df.groupby('总图片文件夹名').cumcount() + 1
+    df['新列名'] = df['总图片文件夹名'] + '-' + df['新列名'].astype(str).str.zfill(3)
+    print(f"已添加'新列名'列（格式：文件夹名-三位序号）")
+    
+    return df
+
+
+# ==================== 页号合理性检查功能 ====================
+
+def check_page_number_reasonableness(df: pd.DataFrame) -> Tuple[pd.DataFrame, set]:
+    """
+    检查工作表中页号的合理性
+    
+    返回:
+    (df, unreasonable_groups): 添加了合理性列的DataFrame和不合理分组的集合
+    """
+    
+    print("正在进行页号合理性检查...")
+    
+    # 检查必要的列是否存在
+    if '源文件名' not in df.columns or '页号' not in df.columns:
+        print("警告：缺少'源文件名'或'页号'列，跳过合理性检查")
+        return df, set()
+    
+    # 添加"合理性"列，默认值为"目前合理"
+    df['合理性'] = '目前合理'
+    
+    # 用于记录哪些源文件名分组包含不合理数据
+    unreasonable_groups = set()
+    
+    # 按"源文件名"分组
+    for source_file, group in df.groupby('源文件名'):
+        # 获取该组的索引
+        indices = group.index.tolist()
+        
+        # 获取页号列的数据
+        page_numbers = group['页号'].tolist()
+        
+        # 标记当前分组是否有不合理数据
+        has_unreasonable = False
+        
+        # 检查递进状态（除了最后一行）
+        for i in range(len(page_numbers) - 1):
+            current_page = page_numbers[i]
+            next_page = page_numbers[i+1]
+            
+            # 跳过最后一行，因为最后一行是特殊格式
+            if i == len(page_numbers) - 2:
+                continue
+                
+            # 检查是否为数字且是否递增
+            try:
+                current_num = float(current_page) if isinstance(current_page, (int, float)) else int(current_page)
+                next_num = float(next_page) if isinstance(next_page, (int, float)) else int(next_page)
+                
+                # 如果不是递增状态，标记为不合理
+                if current_num >= next_num:
+                    df.loc[indices[i], '合理性'] = '不合理'
+                    has_unreasonable = True
+                    print(f"  警告：在分组 '{source_file}' 中，页号 {current_page} 到 {next_page} 不是递增状态")
+                    
+            except (ValueError, TypeError):
+                # 如果当前行不是最后一行的特殊格式却无法转换为数字，标记为不合理
+                df.loc[indices[i], '合理性'] = '不合理'
+                has_unreasonable = True
+                print(f"  警告：在分组 '{source_file}' 中，页号 '{current_page}' 无法识别为有效数字")
+        
+        # 检查最后一行格式
+        if len(page_numbers) > 0:
+            last_page = str(page_numbers[-1])
+            last_index = indices[-1]
+            
+            # 检查格式是否为"数字-数字"
+            pattern = r'^\d+-\d+$'
+            if not re.match(pattern, last_page):
+                df.loc[last_index, '合理性'] = '不合理'
+                has_unreasonable = True
+                print(f"  警告：在分组 '{source_file}' 中，最后一行页号 '{last_page}' 不符合XX-XX格式")
+            else:
+                # 格式正确，检查前后数字
+                parts = last_page.split('-')
+                if int(parts[0]) > int(parts[1]):
+                    # 如果前面的数字大于后面的数字，可能也有问题
+                    df.loc[last_index, '合理性'] = '不合理'
+                    has_unreasonable = True
+                    print(f"  警告：在分组 '{source_file}' 中，最后一行页号 '{last_page}' 中前一个数字大于后一个数字")
+        
+        # 检查倒数第二行到最后一行的递进关系
+        if len(page_numbers) >= 2:
+            second_last_page = page_numbers[-2]
+            last_page_str = str(page_numbers[-1])
+            
+            try:
+                second_last_num = float(second_last_page) if isinstance(second_last_page, (int, float)) else int(second_last_page)
+                
+                # 提取最后一行的第一个数字
+                if re.match(r'^\d+-\d+$', last_page_str):
+                    first_num = int(last_page_str.split('-')[0])
+                    
+                    # 倒数第二行的页号应该小于等于最后一行的第一个数字
+                    if second_last_num > first_num:
+                        df.loc[indices[-2], '合理性'] = '不合理'
+                        has_unreasonable = True
+                        print(f"  警告：在分组 '{source_file}' 中，倒数第二行页号 {second_last_page} 大于最后一行的起始页 {first_num}")
+            except (ValueError, TypeError):
+                pass
+        
+        # 如果该分组包含不合理数据，将源文件名添加到集合中
+        if has_unreasonable:
+            unreasonable_groups.add(source_file)
+    
+    # 统计结果
+    unreasonable_count = (df['合理性'] == '不合理').sum()
+    total_count = len(df)
+    unreasonable_group_count = len(unreasonable_groups)
+    total_group_count = df['源文件名'].nunique()
+    
+    print(f"\n页号合理性检查完成：")
+    print(f"  总计 {total_count} 行数据，分布在 {total_group_count} 个分组中")
+    print(f"  其中 {unreasonable_count} 行被标记为'不合理'")
+    print(f"  涉及 {unreasonable_group_count} 个不合理的分组")
+    
+    return df, unreasonable_groups
+
+
+# ==================== 目录页总数与对比功能 ====================
+
+def add_directory_page_total_and_comparison(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    添加目录页总数和与备考表对比列
+    - 目录页总数：每个分组的页数总和，只在每组的最后一行显示
+    - 目录与备考表对比：对比目录页总数与每份页数，显示"相等"或"不相等"
+    """
+    
+    print("正在计算目录页总数并与备考表对比...")
+    
+    # 检查必要的列是否存在
+    if '源文件名' not in df.columns:
+        print("警告：缺少'源文件名'列，跳过计算")
+        return df
+    
+    if '页数' not in df.columns:
+        print("警告：缺少'页数'列，跳过计算")
+        return df
+    
+    if '每份页数（根据备考表）' not in df.columns:
+        print("警告：缺少'每份页数'列，跳过对比")
+        return df
+    
+    # 初始化新列
+    df['目录页总数（根据页数相加）'] = ''
+    df['目录与备考表对比'] = ''
+    
+    # 按源文件名分组
+    for source_name, group in df.groupby('源文件名'):
+        # 计算该组的页数总和
+        total_pages = group['页数'].sum()
+        
+        # 获取该组的每份页数值（同一分组内每份页数应该相同，取第一个）
+        pages_per_file = group['每份页数（根据备考表）'].iloc[0] if len(group) > 0 else 0
+        
+        # 获取该组的最后一个索引
+        last_index = group.index[-1]
+        
+        # 在最后一行的目录页总数列填入总和
+        df.loc[last_index, '目录页总数（根据页数相加）'] = total_pages
+        
+        # 对比并填入结果
+        if total_pages == pages_per_file:
+            df.loc[last_index, '目录与备考表对比'] = '相等'
+        else:
+            df.loc[last_index, '目录与备考表对比'] = '不相等'
+        
+        print(f"  分组 '{source_name}': 目录页总数（根据页数相加）={total_pages}, 备考表页数={pages_per_file}, 结果={df.loc[last_index, '目录与备考表对比']}")
+    
+    # 统计对比结果
+    equal_count = (df['目录与备考表对比'] == '相等').sum()
+    not_equal_count = (df['目录与备考表对比'] == '不相等').sum()
+    
+    print(f"\n目录页总数与备考表对比完成：")
+    print(f"  相等: {equal_count} 个分组")
+    print(f"  不相等: {not_equal_count} 个分组")
+    
+    return df
+
+
+# ==================== 日期异常检测功能 ====================
+
+def check_date_anomalies(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
+    """
+    检查最大日期和最小日期列的异常数据
+    
+    异常情况包括：
+    1. 空白值
+    2. 位数不足8位
+    3. 格式明显不对（包含非数字字符）
+    4. 无效日期（如20251332）
+    
+    返回:
+    (df, anomaly_rows): 添加了日期异常标记列的DataFrame和异常行索引列表
+    """
+    
+    print("\n正在进行日期异常检测...")
+    
+    # 检查必要的列是否存在
+    date_columns = ['最大日期', '最小日期']
+    missing_columns = [col for col in date_columns if col not in df.columns]
+    if missing_columns:
+        print(f"警告：缺少日期列：{missing_columns}，跳过日期异常检测")
+        return df, []
+    
+    # 添加日期异常标记列
+    df['日期异常标记'] = ''
+    
+    # 用于记录异常的行索引
+    anomaly_rows = []
+    
+    def is_valid_date(date_str):
+        """检查日期是否有效"""
+        # 处理空值
+        if pd.isna(date_str) or str(date_str).strip() == '':
+            return False, "空白值"
+        
+        date_str = str(date_str).strip()
+        
+        # 检查是否只包含数字
+        if not re.match(r'^\d+$', date_str):
+            return False, "包含非数字字符"
+        
+        # 检查位数
+        if len(date_str) != 8:
+            return False, f"位数不足8位（当前{len(date_str)}位）"
+        
+        # 尝试解析日期
+        try:
+            year = int(date_str[:4])
+            month = int(date_str[4:6])
+            day = int(date_str[6:8])
+            
+            # 检查月份和日期是否合理
+            if month < 1 or month > 12:
+                return False, f"无效月份（{month}月）"
+            
+            if day < 1 or day > 31:
+                return False, f"无效日期（{day}日）"
+            
+            # 检查具体月份的天数
+            if month in [4, 6, 9, 11] and day > 30:
+                return False, f"{month}月最多30天"
+            if month == 2:
+                # 闰年判断
+                is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+                if day > 29:
+                    return False, f"2月最多29天"
+                if day == 29 and not is_leap:
+                    return False, f"{year}年不是闰年，2月最多28天"
+            
+            return True, "有效"
+            
+        except (ValueError, TypeError):
+            return False, "无法解析为日期"
+    
+    # 检查每一行
+    for idx, row in df.iterrows():
+        has_anomaly = False
+        anomaly_details = []
+        
+        # 检查最大日期
+        max_date = row['最大日期']
+        is_valid, reason = is_valid_date(max_date)
+        if not is_valid:
+            has_anomaly = True
+            anomaly_details.append(f"最大日期异常: {reason}")
+            print(f"  警告：行 {idx+2}（索引{idx}）最大日期 '{max_date}' - {reason}")
+        
+        # 检查最小日期
+        min_date = row['最小日期']
+        is_valid, reason = is_valid_date(min_date)
+        if not is_valid:
+            has_anomaly = True
+            anomaly_details.append(f"最小日期异常: {reason}")
+            print(f"  警告：行 {idx+2}（索引{idx}）最小日期 '{min_date}' - {reason}")
+        
+        # 标记异常
+        if has_anomaly:
+            df.loc[idx, '日期异常标记'] = '; '.join(anomaly_details)
+            anomaly_rows.append(idx)
+    
+    # 统计结果
+    anomaly_count = len(anomaly_rows)
+    total_count = len(df)
+    
+    print(f"\n日期异常检测完成：")
+    print(f"  总计 {total_count} 行数据")
+    print(f"  发现 {anomaly_count} 行存在日期异常")
+    
+    if anomaly_count > 0:
+        print(f"  异常占比: {anomaly_count/total_count*100:.1f}%")
+    else:
+        print("  所有日期数据正常！")
+    
+    return df, anomaly_rows
+
+
+# ==================== 主程序 ====================
+
+def get_output_path() -> str:
+    """获取输出文件路径"""
+    print("\n请选择输出方式：")
+    print("1. 手动输入完整路径")
+    print("2. 保存在源文件夹中（自动命名）")
+    
+    choice = input("请选择 (1/2，默认为2): ").strip()
+    
+    if choice == '1':
+        while True:
+            output_path = input("请输入输出文件的完整路径（例如：C:\\文件夹\\结果.xlsx）: ").strip()
+            output_path = output_path.strip('"').strip("'")
+            
+            if not output_path:
+                print("路径不能为空，请重新输入")
+                continue
+            
+            # 确保以.xlsx结尾
+            if not output_path.lower().endswith('.xlsx'):
+                output_path += '.xlsx'
+            
+            # 检查目录是否存在
+            output_dir = os.path.dirname(output_path)
+            if output_dir and not os.path.exists(output_dir):
+                create_dir = input(f"目录 '{output_dir}' 不存在，是否创建？(y/n): ").strip().lower()
+                if create_dir == 'y':
+                    try:
+                        os.makedirs(output_dir)
+                        print(f"已创建目录: {output_dir}")
+                    except Exception as e:
+                        print(f"创建目录失败: {e}")
+                        continue
+                else:
+                    continue
+            
+            # 检查文件是否已存在
+            if os.path.exists(output_path):
+                overwrite = input(f"文件 '{output_path}' 已存在，是否覆盖？(y/n): ").strip().lower()
+                if overwrite != 'y':
+                    continue
+            
+            return output_path
+    else:
+        return "auto"
+
+def highlight_anomaly_cells(output_path: str, df: pd.DataFrame, anomaly_rows: list, 
+                           unreasonable_groups: set) -> None:
+    """
+    标黄异常单元格
+    
+    标黄的内容包括：
+    1. 不合理的源文件名（原有的功能）
+    2. 异常的最大日期和最小日期（新增功能）
+    """
+    
+    print("\n正在标黄异常数据...")
+    
+    try:
+        wb = load_workbook(output_path)
+        ws = wb['抽象']
+        
+        # 创建黄色填充样式
+        yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+        
+        # 找到相关列的索引
+        col_indices = {}
+        for idx, cell in enumerate(ws[1], start=1):
+            if cell.value == '源文件名':
+                col_indices['源文件名'] = idx
+            elif cell.value == '最大日期':
+                col_indices['最大日期'] = idx
+            elif cell.value == '最小日期':
+                col_indices['最小日期'] = idx
+        
+        # 标黄不合理的源文件名（原有的功能）
+        if '源文件名' in col_indices and unreasonable_groups:
+            for row_idx in range(2, ws.max_row + 1):
+                cell = ws.cell(row=row_idx, column=col_indices['源文件名'])
+                if cell.value in unreasonable_groups:
+                    cell.fill = yellow_fill
+            print(f"  已标黄 {len(unreasonable_groups)} 个不合理分组的源文件名")
+        
+        # 标黄异常的日期（新增功能）
+        if anomaly_rows and '最大日期' in col_indices and '最小日期' in col_indices:
+            # Excel行号从2开始（第1行是标题）
+            for row_idx in anomaly_rows:
+                # 标黄最大日期
+                max_date_cell = ws.cell(row=row_idx + 2, column=col_indices['最大日期'])
+                max_date_cell.fill = yellow_fill
+                
+                # 标黄最小日期
+                min_date_cell = ws.cell(row=row_idx + 2, column=col_indices['最小日期'])
+                min_date_cell.fill = yellow_fill
+            
+            print(f"  已标黄 {len(anomaly_rows)} 行异常日期数据")
+        
+        # 保存带格式的工作簿
+        wb.save(output_path)
+        print("  异常数据标黄完成！")
+        
+    except Exception as e:
+        print(f"  标黄异常数据时出错: {e}")
+
+def main():
+    """主程序"""
+    print("=" * 60)
+    print("Excel文件数据汇总与统计分析工具（完整版）")
+    print("=" * 60)
+    
+    folder_path = input("\n请输入要处理的文件夹路径: ").strip()
+    folder_path = folder_path.strip('"').strip("'")
+    
+    if not os.path.exists(folder_path):
+        print("错误: 文件夹不存在!")
+        return
+    
+    # 获取输出路径
+    output_choice = get_output_path()
+    
+    # 第一步：数据汇总
+    df_demo = merge_excel_files_step1(folder_path)
+    
+    if df_demo is None:
+        return
+    
+    # 第二步：统计分析
+    df_result = process_statistics_step2(df_demo)
+    
+    if df_result is None:
+        return
+    
+    # 第三步：添加文件夹名列
+    df_result = add_folder_name_column(df_result)
+    
+    # 第四步：添加序号列
+    df_result = add_sequence_number_column(df_result)
+    
+    # 第五步：计算目录页总数并与备考表对比
+    df_result = add_directory_page_total_and_comparison(df_result)
+    
+    # 第六步：页号合理性检查
+    df_result, unreasonable_groups = check_page_number_reasonableness(df_result)
+    
+    # 第七步：日期异常检测（新增功能）
+    df_result, anomaly_rows = check_date_anomalies(df_result)
+    
+    # 确定输出路径
+    if output_choice == "auto":
+        output_filename = f"BeforeSplit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        output_path = os.path.join(folder_path, output_filename)
+    else:
+        output_path = output_choice
+    
+    # 保存结果（工作表命名为"抽象"）
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        df_result.to_excel(writer, sheet_name='抽象', index=False)
+    
+    # 标黄异常数据
+    highlight_anomaly_cells(output_path, df_result, anomaly_rows, unreasonable_groups)
+    
+    print(f"\n" + "=" * 60)
+    print("处理完成!")
+    print(f"输出文件: {output_path}")
+    print(f"工作表名: 抽象")
+    print(f"新增列: 总图片文件夹名、新列名、目录页总数、目录与备考表对比、合理性、日期异常标记")
+    print("=" * 60)
+
+if __name__ == "__main__":
+    try:
+        import pandas
+        import xlrd
+        from openpyxl import load_workbook
+        from openpyxl.styles import PatternFill
+    except ImportError as e:
+        print(f"错误: 缺少必要的库 - {e}")
+        print("请安装: pip install pandas xlrd openpyxl")
+        exit(1)
+    
+    main()
+    
+    input("\n按回车键退出...")
