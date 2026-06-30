@@ -269,7 +269,7 @@ class PDFProcessorApp:
                         skip_count += 1
                     else:
                         error_count += 1
-                except:
+                except Exception:
                     error_count += 1
                     
         # 输出统计信息

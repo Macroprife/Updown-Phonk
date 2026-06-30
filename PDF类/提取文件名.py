@@ -111,7 +111,7 @@ def select_folder_dialog():
         folder_path = filedialog.askdirectory(title="选择要提取的文件夹")
         root.destroy()
         return folder_path
-    except:
+    except Exception:
         return None
 
 def select_save_path():
@@ -128,7 +128,7 @@ def select_save_path():
         )
         root.destroy()
         return file_path
-    except:
+    except Exception:
         return None
 
 def show_cleaning_demo():

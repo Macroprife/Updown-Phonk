@@ -76,7 +76,7 @@ def flatten_pdfs(root_path):
                 if not any(current_parent.iterdir()):
                     current_parent.rmdir()
                     print(f"✓ 已删除空目录: {current_parent.relative_to(root)}")
-            except:
+            except OSError:
                 pass
                 
         except Exception as e:

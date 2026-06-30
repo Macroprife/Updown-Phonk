@@ -2,7 +2,7 @@ import os
 import re
 import pandas as pd
 import warnings
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from datetime import datetime
 import xlrd
 from openpyxl import load_workbook
@@ -262,13 +262,13 @@ def parse_date_for_comparison(date_value):
         if re.match(r'^\d{8}$', date_str):
             try:
                 return pd.to_datetime(date_str, format='%Y%m%d')
-            except:
+            except ValueError:
                 pass
         
         for fmt in ['%Y-%m-%d', '%Y/%m/%d', '%Y.%m.%d', '%d-%m-%Y', '%d/%m/%Y']:
             try:
                 return pd.to_datetime(date_str, format=fmt)
-            except:
+            except ValueError:
                 continue
     
     if isinstance(date_value, (int, float)):
@@ -276,38 +276,64 @@ def parse_date_for_comparison(date_value):
         if len(date_str) == 8:
             try:
                 return pd.to_datetime(date_str, format='%Y%m%d')
-            except:
+            except ValueError:
                 pass
     
     try:
         return pd.to_datetime(date_value)
-    except:
+    except (ValueError, TypeError):
         return pd.NaT
 
 def format_date_to_8digits(date_value):
-    """将日期格式化为8位数字字符串"""
+    """将日期格式化为8位数字字符串，如果无法正确格式化则返回原值"""
     if pd.isna(date_value):
         return ""
     
+    # 如果已经是8位数字字符串，直接返回
     if isinstance(date_value, str):
         date_str = date_value.strip()
         if re.match(r'^\d{8}$', date_str):
             return date_str
     
+    # 如果是数字且为8位，转换为字符串
     if isinstance(date_value, (int, float)):
         date_str = str(int(date_value))
-        if len(date_str) == 8:
+        if len(date_str) == 8 and date_str.isdigit():
             return date_str
     
+    # 如果是时间戳，格式化
     if isinstance(date_value, (pd.Timestamp, datetime)):
         return date_value.strftime('%Y%m%d')
     
+    # 尝试从字符串中提取日期
     date_str = str(date_value).strip()
+    
+    # 检查是否是纯数字
     digits_only = re.sub(r'\D', '', date_str)
     
+    # 严格检查：必须是8位数字才能返回
     if len(digits_only) == 8:
-        return digits_only
+        # 验证是否为有效日期
+        try:
+            year = int(digits_only[:4])
+            month = int(digits_only[4:6])
+            day = int(digits_only[6:8])
+            
+            # 简单验证日期有效性
+            if 1 <= month <= 12 and 1 <= day <= 31:
+                # 更严格的天数验证
+                if month in [4, 6, 9, 11] and day > 30:
+                    return date_str
+                if month == 2:
+                    is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+                    if day > 29 or (day == 29 and not is_leap):
+                        return date_str
+                return digits_only
+        except (ValueError, TypeError):
+            pass
     
+    # 对于7位或更少位数的数字，返回原值（将在日期异常检测中被标记）
+    # 注意：不进行自动补0
     return date_str
 
 def extract_start_page(page_str):
@@ -445,7 +471,7 @@ def add_sequence_number_column(df: pd.DataFrame) -> pd.DataFrame:
 
 # ==================== 页号合理性检查功能 ====================
 
-def check_page_number_reasonableness(df: pd.DataFrame) -> tuple:
+def check_page_number_reasonableness(df: pd.DataFrame) -> Tuple[pd.DataFrame, set]:
     """
     检查工作表中页号的合理性
     
@@ -622,6 +648,129 @@ def add_directory_page_total_and_comparison(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ==================== 日期异常检测功能 ====================
+
+def check_date_anomalies(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
+    """
+    检查最大日期和最小日期列的异常数据（增强版）
+    
+    异常情况包括：
+    1. 空白值
+    2. 位数不足8位（包括7位）
+    3. 格式明显不对（包含非数字字符）
+    4. 无效日期（如20251332）
+    """
+    
+    print("\n正在进行日期异常检测...")
+    
+    # 检查必要的列是否存在
+    date_columns = ['最大日期', '最小日期']
+    missing_columns = [col for col in date_columns if col not in df.columns]
+    if missing_columns:
+        print(f"警告：缺少日期列：{missing_columns}，跳过日期异常检测")
+        return df, []
+    
+    # 添加日期异常标记列
+    df['日期异常标记'] = ''
+    
+    # 用于记录异常的行索引
+    anomaly_rows = []
+    
+    def validate_date(date_str):
+        """验证日期格式和有效性，返回(是否有效, 错误信息)"""
+        # 处理空值
+        if pd.isna(date_str):
+            return False, "空白值"
+        
+        date_str = str(date_str).strip()
+        if date_str == '':
+            return False, "空白值"
+        
+        # 检查是否只包含数字
+        if not re.match(r'^\d+$', date_str):
+            return False, "包含非数字字符"
+        
+        # 检查位数 - 严格要求8位
+        if len(date_str) != 8:
+            return False, f"位数不正确（当前{len(date_str)}位，应为8位）"
+        
+        # 尝试解析日期
+        try:
+            year = int(date_str[:4])
+            month = int(date_str[4:6])
+            day = int(date_str[6:8])
+            
+            # 检查年份范围（合理的年份范围）
+            if year < 1900 or year > 2100:
+                return False, f"年份超出合理范围（{year}年）"
+            
+            # 检查月份
+            if month < 1 or month > 12:
+                return False, f"无效月份（{month}月）"
+            
+            # 检查日期
+            if day < 1 or day > 31:
+                return False, f"无效日期（{day}日）"
+            
+            # 检查具体月份的天数
+            if month in [4, 6, 9, 11] and day > 30:
+                return False, f"{month}月最多30天"
+            if month == 2:
+                # 闰年判断
+                is_leap = (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0)
+                if day > 29:
+                    return False, f"2月最多29天"
+                if day == 29 and not is_leap:
+                    return False, f"{year}年不是闰年，2月最多28天"
+            
+            return True, "有效"
+            
+        except (ValueError, TypeError):
+            return False, "无法解析为日期"
+    
+    # 检查每一行
+    for idx, row in df.iterrows():
+        has_anomaly = False
+        anomaly_details = []
+        
+        # 检查最大日期
+        max_date = row['最大日期']
+        is_valid, reason = validate_date(max_date)
+        if not is_valid:
+            has_anomaly = True
+            anomaly_details.append(f"最大日期异常: {reason}")
+            print(f"  ⚠ 行 {idx+2}（索引{idx}）最大日期 '{max_date}' - {reason}")
+        
+        # 检查最小日期
+        min_date = row['最小日期']
+        is_valid, reason = validate_date(min_date)
+        if not is_valid:
+            has_anomaly = True
+            anomaly_details.append(f"最小日期异常: {reason}")
+            print(f"  ⚠ 行 {idx+2}（索引{idx}）最小日期 '{min_date}' - {reason}")
+        
+        # 标记异常
+        if has_anomaly:
+            df.loc[idx, '日期异常标记'] = '; '.join(anomaly_details)
+            anomaly_rows.append(idx)
+    
+    # 统计结果
+    anomaly_count = len(anomaly_rows)
+    total_count = len(df)
+    
+    print(f"\n日期异常检测完成：")
+    print(f"  ✓ 总计 {total_count} 行数据")
+    print(f"  ✓ 发现 {anomaly_count} 行存在日期异常")
+    
+    if anomaly_count > 0:
+        print(f"  ⚠ 异常占比: {anomaly_count/total_count*100:.1f}%")
+        print(f"  ℹ 异常数据已标记在'日期异常标记'列中")
+    else:
+        print("  ✓ 所有日期数据正常！")
+    
+    return df, anomaly_rows
+
+
 # ==================== 主程序 ====================
 
 def get_output_path() -> str:
@@ -669,6 +818,64 @@ def get_output_path() -> str:
     else:
         return "auto"
 
+def highlight_anomaly_cells(output_path: str, df: pd.DataFrame, anomaly_rows: list, 
+                           unreasonable_groups: set) -> None:
+    """
+    标黄异常单元格
+    
+    标黄的内容包括：
+    1. 不合理的源文件名（原有的功能）
+    2. 异常的最大日期和最小日期（新增功能）
+    """
+    
+    print("\n正在标黄异常数据...")
+    
+    try:
+        wb = load_workbook(output_path)
+        ws = wb['抽象']
+        
+        # 创建黄色填充样式
+        yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+        
+        # 找到相关列的索引
+        col_indices = {}
+        for idx, cell in enumerate(ws[1], start=1):
+            if cell.value == '源文件名':
+                col_indices['源文件名'] = idx
+            elif cell.value == '最大日期':
+                col_indices['最大日期'] = idx
+            elif cell.value == '最小日期':
+                col_indices['最小日期'] = idx
+        
+        # 标黄不合理的源文件名（原有的功能）
+        if '源文件名' in col_indices and unreasonable_groups:
+            for row_idx in range(2, ws.max_row + 1):
+                cell = ws.cell(row=row_idx, column=col_indices['源文件名'])
+                if cell.value in unreasonable_groups:
+                    cell.fill = yellow_fill
+            print(f"  已标黄 {len(unreasonable_groups)} 个不合理分组的源文件名")
+        
+        # 标黄异常的日期（新增功能）
+        if anomaly_rows and '最大日期' in col_indices and '最小日期' in col_indices:
+            # Excel行号从2开始（第1行是标题）
+            for row_idx in anomaly_rows:
+                # 标黄最大日期
+                max_date_cell = ws.cell(row=row_idx + 2, column=col_indices['最大日期'])
+                max_date_cell.fill = yellow_fill
+                
+                # 标黄最小日期
+                min_date_cell = ws.cell(row=row_idx + 2, column=col_indices['最小日期'])
+                min_date_cell.fill = yellow_fill
+            
+            print(f"  已标黄 {len(anomaly_rows)} 行异常日期数据")
+        
+        # 保存带格式的工作簿
+        wb.save(output_path)
+        print("  异常数据标黄完成！")
+        
+    except Exception as e:
+        print(f"  标黄异常数据时出错: {e}")
+
 def main():
     """主程序"""
     print("=" * 60)
@@ -709,6 +916,9 @@ def main():
     # 第六步：页号合理性检查
     df_result, unreasonable_groups = check_page_number_reasonableness(df_result)
     
+    # 第七步：日期异常检测（新增功能）
+    df_result, anomaly_rows = check_date_anomalies(df_result)
+    
     # 确定输出路径
     if output_choice == "auto":
         output_filename = f"BeforeSplit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -720,38 +930,14 @@ def main():
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         df_result.to_excel(writer, sheet_name='抽象', index=False)
     
-    # 标黄不合理的源文件名
-    if unreasonable_groups:
-        print("\n正在标黄不合理的源文件名...")
-        wb = load_workbook(output_path)
-        ws = wb['抽象']
-        
-        # 创建黄色填充样式
-        yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
-        
-        # 找到"源文件名"列的索引
-        source_file_col_idx = None
-        for idx, cell in enumerate(ws[1], start=1):
-            if cell.value == '源文件名':
-                source_file_col_idx = idx
-                break
-        
-        if source_file_col_idx:
-            # 遍历数据行（从第2行开始）
-            for row_idx in range(2, ws.max_row + 1):
-                cell = ws.cell(row=row_idx, column=source_file_col_idx)
-                if cell.value in unreasonable_groups:
-                    cell.fill = yellow_fill
-            
-            # 保存带格式的工作簿
-            wb.save(output_path)
-            print(f"  已标黄 {len(unreasonable_groups)} 个不合理分组的源文件名")
+    # 标黄异常数据
+    highlight_anomaly_cells(output_path, df_result, anomaly_rows, unreasonable_groups)
     
     print(f"\n" + "=" * 60)
     print("处理完成!")
     print(f"输出文件: {output_path}")
     print(f"工作表名: 抽象")
-    print(f"新增列: 总图片文件夹名、新列名、目录页总数、目录与备考表对比、合理性")
+    print(f"新增列: 总图片文件夹名、新列名、目录页总数、目录与备考表对比、合理性、日期异常标记")
     print("=" * 60)
 
 if __name__ == "__main__":

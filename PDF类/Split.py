@@ -265,8 +265,8 @@ class PDFSplitterApp:
             result_msg = f"传送完成！\n成功：{success_count} 个文件\n失败：{len(error_files)} 个文件"
             
             if error_files:
-                result_msg += "\n\n错误详情：\n" + "\n".join(error_files[:5])
-                if len(error_files) > 5:
+                result_msg += "\n\n错误详情：\n" + "\n".join(error_files[:20])
+                if len(error_files) > 20:
                     result_msg += f"\n... 还有 {len(error_files)-5} 个错误"
             
             # 显示目录结构示例
