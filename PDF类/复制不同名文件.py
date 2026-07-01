@@ -83,3 +83,4 @@ if __name__ == "__main__":
         copy_unmatched_pdfs(folder1, folder2, output_folder)
     except Exception as e:
         print(f"执行过程中出现错误: {e}")
+    input("\n按回车键退出...")

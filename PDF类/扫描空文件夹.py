@@ -36,3 +36,4 @@ if __name__ == "__main__":
                 print(f"{i}. {folder}")
         else:
             print("\n没有找到空文件夹")
+    input("\n按回车键退出...")

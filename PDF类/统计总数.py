@@ -21,3 +21,4 @@ if __name__ == "__main__":
         print(count_pdf_pages(folder))
     else:
         print("路径无效")
+    input("\n按回车键退出...")
