@@ -2,8 +2,8 @@ import os
 import pandas as pd
 import re
 from datetime import datetime
-
-from updown.gui.dialogs import pick_folder, pick_save_file
+import tkinter as tk
+from tkinter import filedialog
 
 def clean_filename(filename):
     """
@@ -104,17 +104,32 @@ def sanitize_sheet_name(name):
 
 def select_folder_dialog():
     """打开文件夹选择对话框"""
-    return pick_folder(title="选择要提取的文件夹")
-
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        folder_path = filedialog.askdirectory(title="选择要提取的文件夹")
+        root.destroy()
+        return folder_path
+    except Exception:
+        return None
 
 def select_save_path():
     """选择保存路径"""
-    return pick_save_file(
-        title="保存Excel文件",
-        defaultextension=".xlsx",
-        filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
-        initialfile=f"批量文件清单_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-    )
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        file_path = filedialog.asksaveasfilename(
+            title="保存Excel文件",
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+            initialfile=f"批量文件清单_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        )
+        root.destroy()
+        return file_path
+    except Exception:
+        return None
 
 def show_cleaning_demo():
     """

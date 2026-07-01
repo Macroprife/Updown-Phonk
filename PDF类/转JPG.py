@@ -4,28 +4,7 @@ from PIL import Image
 import io
 from datetime import datetime
 import logging
-import sys
-
-def setup_logging():
-    """设置简单的控制台输出（不生成日志文件）"""
-    # 只使用控制台输出，不生成日志文件
-    # 创建一个简单的logger，只输出到控制台
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    
-    # 清除已有的处理器
-    logger.handlers.clear()
-    
-    # 添加控制台处理器
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
-    console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(console_formatter)
-    logger.addHandler(console_handler)
-    
-    return logger
-
-# 重新配置logging，不生成文件
+# 配置日志到控制台（不生成日志文件）
 logging.basicConfig(handlers=[logging.StreamHandler()], level=logging.INFO)
 
 def verify_conversion(pdf_path, output_folder, expected_pages):

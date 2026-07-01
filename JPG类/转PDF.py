@@ -42,7 +42,7 @@ def images_to_pdf(input_dir, output_dir, dpi=300):
             
             # 收集当前子文件夹中的所有图片
             image_files = []
-            for file in sorted(files := os.listdir(root)):  # 排序保证顺序一致
+            for file in sorted(os.listdir(root)):  # 排序保证顺序一致
                 file_path = os.path.join(root, file)
                 if os.path.isfile(file_path):
                     ext = os.path.splitext(file)[1].lower()
@@ -151,11 +151,8 @@ def images_to_pdf(input_dir, output_dir, dpi=300):
                         img.close()
                     images.clear()
                 
-                # 强制垃圾回收
+                # 释放内存
                 gc.collect()
-            
-            # 短暂延迟，让系统有时间处理
-            time.sleep(0.1)
             
         except Exception as e:
             print(f"✗ 处理 {relative_path} 时出错: {str(e)}")

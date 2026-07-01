@@ -5,5 +5,5 @@ pandas>=1.5.0          # 表格合并与处理
 openpyxl>=3.0.0        # .xlsx 读写（openpyxl 引擎）
 xlrd>=2.0.0            # .xls 兼容（旧格式 Excel）
 Pillow>=9.0.0          # JPG 转 PDF、图片处理
-PyMuPDF>=1.20.0        # PDF 转 JPG（PDF类/转JPG.py）
-PyPDF2>=3.0.0          # PDF 删页、分割、统计（PDF删页.py、Split.py、统计总数.py）
+PyMuPDF>=1.20.0        # PDF 转 JPG（PDF类/转JPG.py）⚠ 注意：import 名为 fitz
+PyPDF2>=3.0.0          # PDF 删页、分割、统计（PDF删页.py、Split(未测试).py、统计总数.py）
