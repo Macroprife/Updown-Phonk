@@ -63,24 +63,28 @@ def copy_unmatched_pdfs(folder1, folder2, output_folder):
 
 # 主程序
 if __name__ == "__main__":
-    print("=== PDF文件比较工具 ===")
-    
-    # 手动输入三个路径
-    folder1 = input("请输入第一个文件夹路径: ").strip()
-    folder2 = input("请输入第二个文件夹路径: ").strip()
-    output_folder = input("请输入输出文件夹路径: ").strip()
-    
-    # 验证路径是否存在
-    if not os.path.exists(folder1):
-        print(f"错误：路径不存在 - {folder1}")
-        exit(1)
-    if not os.path.exists(folder2):
-        print(f"错误：路径不存在 - {folder2}")
-        exit(1)
-    
-    # 执行比较和复制操作
     try:
-        copy_unmatched_pdfs(folder1, folder2, output_folder)
-    except Exception as e:
-        print(f"执行过程中出现错误: {e}")
+        print("=== PDF文件比较工具 ===")
+
+        # 手动输入三个路径
+        folder1 = input("请输入第一个文件夹路径: ").strip()
+        folder2 = input("请输入第二个文件夹路径: ").strip()
+        output_folder = input("请输入输出文件夹路径: ").strip()
+
+        # 验证路径是否存在
+        if not os.path.exists(folder1):
+            print(f"错误：路径不存在 - {folder1}")
+            exit(1)
+        if not os.path.exists(folder2):
+            print(f"错误：路径不存在 - {folder2}")
+            exit(1)
+
+        # 执行比较和复制操作
+        try:
+            copy_unmatched_pdfs(folder1, folder2, output_folder)
+        except Exception as e:
+            print(f"执行过程中出现错误: {e}")
+    except Exception:
+        import traceback
+        traceback.print_exc()
     input("\n按回车键退出...")

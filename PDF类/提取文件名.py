@@ -449,5 +449,10 @@ if __name__ == "__main__":
         print("\n安装完成后重新运行程序")
         input("\n按回车键退出...")
         exit()
-    
-    main()
+
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        input("\n发生错误，按回车键退出...")

@@ -213,5 +213,9 @@ def main():
                 print("无效选项，请重新输入")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
     input("\n按回车键退出...")

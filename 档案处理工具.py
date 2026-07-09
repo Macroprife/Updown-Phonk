@@ -9,6 +9,29 @@ import tkinter as tk
 from tkinter import ttk
 
 # ═══════════════════════════════════════════
+# 依赖检查
+# ═══════════════════════════════════════════
+REQUIRED_PACKAGES = {
+    'pandas':    'pip install pandas',
+    'openpyxl':  'pip install openpyxl',
+    'xlrd':      'pip install xlrd',
+    'PIL':       'pip install Pillow',
+    'fitz':      'pip install PyMuPDF',
+    'PyPDF2':    'pip install PyPDF2',
+}
+
+
+def _check_dependencies():
+    """返回缺失的包列表 [(模块名, 安装命令), ...]。"""
+    missing = []
+    for mod, install_cmd in REQUIRED_PACKAGES.items():
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append((mod, install_cmd))
+    return missing
+
+# ═══════════════════════════════════════════
 # 工具注册表（只需维护这一个列表）
 # ═══════════════════════════════════════════
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -79,6 +102,10 @@ class LauncherApp:
         self.root.geometry("680x620")
         self.root.resizable(True, True)
         self.root.configure(bg="#f5f6fa")
+
+        # 找到有控制台的 python.exe
+        # （双击运行时 sys.executable 是 pythonw.exe，CLI 工具需要 python.exe）
+        self.python_exe = self._find_console_python()
 
         style = ttk.Style()
         style.theme_use("clam")
@@ -151,13 +178,12 @@ class LauncherApp:
                          anchor="w", wraplength=500, justify="left").grid(
                     row=1, column=0, sticky="w", pady=(2, 6))
 
-                tag = "🖥 命令行" if kind == "cli" else "🪟 窗口"
                 btn = tk.Button(card, text="▶ 启动",
                                 font=("微软雅黑", 9, "bold"),
                                 bg="#3498db", fg="white",
                                 activebackground="#2980b9",
                                 cursor="hand2", bd=0, padx=16, pady=4,
-                                command=lambda p=path, k=kind: self.launch(p, k))
+                                command=lambda p=path, k=kind, n=name: self.launch(p, k, n))
                 btn.grid(row=2, column=0, sticky="w")
 
                 row += 1
@@ -166,7 +192,36 @@ class LauncherApp:
         tk.Label(main, text=f"工具目录：{BASE_DIR}",
                  font=("微软雅黑", 8), fg="#bdc3c7", bg="#f5f6fa").pack(side=tk.BOTTOM, pady=(10, 0))
 
-    def launch(self, rel_path, kind):
+    # ── 辅助方法 ──
+
+    @staticmethod
+    def _find_console_python():
+        """返回 python.exe（非 pythonw.exe），供 CLI 子进程使用。"""
+        if sys.platform != 'win32':
+            return sys.executable
+        # 常见情况：pythonw.exe → python.exe 在同目录下
+        py_exe = sys.executable.replace('pythonw.exe', 'python.exe')
+        if os.path.exists(py_exe):
+            return py_exe
+        # 备选：PATH 中的 python
+        return 'python'
+
+    def _monitor_subprocess(self, proc, tool_name):
+        """监控 GUI 子进程：2 秒内异常退出则弹窗显示错误。"""
+        def _check():
+            ret = proc.poll()
+            if ret is not None and ret != 0:
+                from tkinter import messagebox
+                stderr_text = ""
+                if proc.stderr:
+                    stderr_text = proc.stderr.read()
+                msg = f"「{tool_name}」启动失败 (退出码 {ret})"
+                if stderr_text.strip():
+                    msg += f"\n\n{stderr_text.strip()[:500]}"
+                messagebox.showerror("启动失败", msg)
+        self.root.after(2000, _check)
+
+    def launch(self, rel_path, kind, tool_name=""):
         script = os.path.join(BASE_DIR, rel_path)
         if not os.path.exists(script):
             from tkinter import messagebox
@@ -174,20 +229,38 @@ class LauncherApp:
             return
 
         if kind == "gui":
-            subprocess.Popen([sys.executable, script],
-                             cwd=os.path.dirname(script))
+            proc = subprocess.Popen(
+                [sys.executable, script],
+                cwd=os.path.dirname(script),
+                stderr=subprocess.PIPE, text=True,
+            )
+            self._monitor_subprocess(proc, tool_name)
         else:
-            # Windows: 新控制台窗口，cmd /k 保证即使脚本末尾没有 input() 也不会闪退
+            # Windows: 新控制台窗口。必须用 python.exe（有控制台），
+            # 因为双击运行时 sys.executable 是 pythonw.exe（无控制台），
+            # 用 pythonw.exe 会导致输出不可见、input() 无效。
             subprocess.Popen(
-                ['cmd', '/k', sys.executable, script],
+                ['cmd', '/k', self.python_exe, script],
                 cwd=BASE_DIR,
                 creationflags=subprocess.CREATE_NEW_CONSOLE
             )
 
 
 def main():
+    # ── 启动前检查依赖 ──
+    missing = _check_dependencies()
+    if missing:
+        from tkinter import messagebox
+        lines = ["以下 Python 包未安装，请先安装后重试：", ""]
+        for _mod, cmd in missing:
+            lines.append(f"  {cmd}")
+        lines.append("")
+        lines.append("或一次性安装全部：")
+        lines.append(f"  pip install -r {os.path.join(BASE_DIR, 'requirements.txt')}")
+        messagebox.showerror("缺少依赖", "\n".join(lines))
+        return
+
     root = tk.Tk()
-    # 尝试设置图标
     try:
         root.iconbitmap(default="")
     except Exception:

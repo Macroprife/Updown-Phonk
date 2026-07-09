@@ -16,9 +16,13 @@ def count_pdf_pages(folder_path):
     return total_pages
 
 if __name__ == "__main__":
-    folder = input("请输入文件夹路径: ").strip()
-    if os.path.isdir(folder):
-        print(count_pdf_pages(folder))
-    else:
-        print("路径无效")
+    try:
+        folder = input("请输入文件夹路径: ").strip()
+        if os.path.isdir(folder):
+            print(count_pdf_pages(folder))
+        else:
+            print("路径无效")
+    except Exception:
+        import traceback
+        traceback.print_exc()
     input("\n按回车键退出...")

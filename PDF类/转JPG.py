@@ -423,5 +423,9 @@ def main():
     input()
 
 if __name__ == "__main__":
-    
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        input("\n发生错误，按回车键退出...")

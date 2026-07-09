@@ -949,8 +949,12 @@ if __name__ == "__main__":
     except ImportError as e:
         print(f"错误: 缺少必要的库 - {e}")
         print("请安装: pip install pandas xlrd openpyxl")
+        input("\n按回车键退出...")
         exit(1)
-    
-    main()
-    
+
+    try:
+        main()
+    except Exception:
+        import traceback
+        traceback.print_exc()
     input("\n按回车键退出...")
