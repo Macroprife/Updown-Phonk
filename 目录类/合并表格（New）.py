@@ -621,21 +621,26 @@ def add_directory_page_total_and_comparison(df: pd.DataFrame) -> pd.DataFrame:
         total_pages = group['页数'].sum()
         
         # 获取该组的每份页数值（同一分组内每份页数应该相同，取第一个）
-        pages_per_file = group['每份页数（根据备考表）'].iloc[0] if len(group) > 0 else 0
-        
+        pages_per_file_raw = group['每份页数（根据备考表）'].iloc[0] if len(group) > 0 else 0
+        try:
+            pages_per_file = int(float(pages_per_file_raw))
+        except (ValueError, TypeError):
+            pages_per_file = 0
+
         # 获取该组的最后一个索引
         last_index = group.index[-1]
-        
+
         # 在最后一行的目录页总数列填入总和
-        df.loc[last_index, '目录页总数（根据页数相加）'] = total_pages
-        
+        # pandas 2.x+ StringDtype 不能直接赋整数，转 str
+        df.loc[last_index, '目录页总数（根据页数相加）'] = str(int(total_pages))
+
         # 对比并填入结果
-        if total_pages == pages_per_file:
+        if int(total_pages) == pages_per_file:
             df.loc[last_index, '目录与备考表对比'] = '相等'
         else:
             df.loc[last_index, '目录与备考表对比'] = '不相等'
-        
-        print(f"  分组 '{source_name}': 目录页总数（根据页数相加）={total_pages}, 备考表页数={pages_per_file}, 结果={df.loc[last_index, '目录与备考表对比']}")
+
+        print(f"  分组 '{source_name}': 目录页总数（根据页数相加）={int(total_pages)}, 备考表页数={pages_per_file}, 结果={df.loc[last_index, '目录与备考表对比']}")
     
     # 统计对比结果
     equal_count = (df['目录与备考表对比'] == '相等').sum()
